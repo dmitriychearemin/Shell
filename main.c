@@ -129,10 +129,6 @@ void execute_command(Command *cmd, int input_fd, int output_fd) {
     pid_t pid = fork();
     
     if (pid == 0) {
-        // Сохраняем оригинальные дескрипторы
-        int original_stdin = dup(STDIN_FILENO);
-        int original_stdout = dup(STDOUT_FILENO);
-
         // Перенаправление ввода
         if (cmd->input_file) {
             int fd = open(cmd->input_file, O_RDONLY);
@@ -156,7 +152,7 @@ void execute_command(Command *cmd, int input_fd, int output_fd) {
             close(fd);
         }
         
-        // Восстановление дескрипторов после выполнения
+        // Перенаправления для конвейера
         if (input_fd != STDIN_FILENO) {
             dup2(input_fd, STDIN_FILENO);
             close(input_fd);
@@ -166,17 +162,12 @@ void execute_command(Command *cmd, int input_fd, int output_fd) {
             dup2(output_fd, STDOUT_FILENO);
             close(output_fd);
         }
-
-        // Выполняем команду
+        
+        // Закрываем все открытые пайпы
+        for (int i = 3; i < getdtablesize(); i++) close(i);
+        
         execvp(cmd->args[0], cmd->args);
         perror("execvp failed");
-        
-        // Восстанавливаем оригинальные дескрипторы перед выходом
-        dup2(original_stdin, STDIN_FILENO);
-        dup2(original_stdout, STDOUT_FILENO);
-        close(original_stdin);
-        close(original_stdout);
-        
         exit(EXIT_FAILURE);
     }
 }
