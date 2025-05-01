@@ -21,12 +21,10 @@ typedef struct {
     int background;
 } Command;
 
-// Глобальные переменные
 volatile sig_atomic_t foreground_mode = 1;
 char *history[MAX_HISTORY];
 int history_count = 0;
 
-// Добавление команды в историю
 void add_to_history(const char *cmd) {
     if (cmd[0] == '\0') return;
     
@@ -42,7 +40,6 @@ void add_to_history(const char *cmd) {
     history_count++;
 }
 
-// Вывод истории
 void show_history() {
     int start = history_count > MAX_HISTORY ? history_count - MAX_HISTORY : 0;
     for (int i = start; i < history_count; i++) {
@@ -50,7 +47,6 @@ void show_history() {
     }
 }
 
-// Встроенные команды
 int execute_builtin(Command *cmd) {
     if (strcmp(cmd->args[0], "cd") == 0) {
         char *path = cmd->args[1] ? cmd->args[1] : getenv("HOME");
@@ -61,11 +57,11 @@ int execute_builtin(Command *cmd) {
     }
     
     if (strcmp(cmd->args[0], "help") == 0) {
-        printf("Встроенные команды:\n"
-               "cd [DIR] - сменить директорию\n"
-               "help - показать справку\n"
-               "history - показать историю команд\n"
-               "exit - выход из оболочки\n");
+        printf("Built-in commands:\n"
+               "cd [DIR] - change directory\n"
+               "help - show help\n"
+               "history - show command history\n"
+               "exit - exit shell\n");
         return 1;
     }
     
@@ -76,7 +72,7 @@ int execute_builtin(Command *cmd) {
     
     return 0;
 }
-// Обработчик сигнала SIGINT
+
 void sigint_handler(int sig) {
     if (foreground_mode) {
         printf("\nmyshell> ");
@@ -84,37 +80,40 @@ void sigint_handler(int sig) {
     }
 }
 
-// Разбиение строки на команды по конвейерам
 int parse_pipeline(char *line, Command pipeline[]) {
     int cmd_count = 0;
     char *token = strtok(line, "|");
     
     while (token != NULL && cmd_count < MAX_PIPES) {
-
         if (strlen(token) == 0) {
             token = strtok(NULL, "|");
             continue;
         }
 
-        pipeline[cmd_count].args[0] = strtok(token, " \t\n");
+        pipeline[cmd_count].input_file = NULL;
+        pipeline[cmd_count].output_file = NULL;
+        pipeline[cmd_count].append = 0;
+        pipeline[cmd_count].background = 0;
+
+        char *ptr = strtok(token, " \t\n");
+        pipeline[cmd_count].args[0] = ptr;
         int i = 1;
         
-        char *arg;
-        while ((arg = strtok(NULL, " \t\n")) != NULL) {
-            if (strcmp(arg, ">") == 0) {
+        while ((ptr = strtok(NULL, " \t\n")) != NULL) {
+            if (strcmp(ptr, ">") == 0) {
                 pipeline[cmd_count].output_file = strtok(NULL, " \t\n");
                 pipeline[cmd_count].append = 0;
                 break;
-            } else if (strcmp(arg, ">>") == 0) {
+            } else if (strcmp(ptr, ">>") == 0) {
                 pipeline[cmd_count].output_file = strtok(NULL, " \t\n");
                 pipeline[cmd_count].append = 1;
                 break;
-            } else if (strcmp(arg, "<") == 0) {
+            } else if (strcmp(ptr, "<") == 0) {
                 pipeline[cmd_count].input_file = strtok(NULL, " \t\n");
-            } else if (strcmp(arg, "&") == 0) {
+            } else if (strcmp(ptr, "&") == 0) {
                 pipeline[cmd_count].background = 1;
             } else {
-                pipeline[cmd_count].args[i++] = arg;
+                pipeline[cmd_count].args[i++] = ptr;
             }
         }
         pipeline[cmd_count].args[i] = NULL;
@@ -124,7 +123,6 @@ int parse_pipeline(char *line, Command pipeline[]) {
     return cmd_count;
 }
 
-// Выполнение одной команды
 void execute_command(Command *cmd, int input_fd, int output_fd) {
     pid_t pid = fork();
     
@@ -152,7 +150,7 @@ void execute_command(Command *cmd, int input_fd, int output_fd) {
             close(fd);
         }
         
-        // Перенаправления для конвейера
+        // Обработка конвейера
         if (input_fd != STDIN_FILENO) {
             dup2(input_fd, STDIN_FILENO);
             close(input_fd);
@@ -163,8 +161,8 @@ void execute_command(Command *cmd, int input_fd, int output_fd) {
             close(output_fd);
         }
         
-        // Закрываем все открытые пайпы
-        for (int i = 3; i < getdtablesize(); i++) close(i);
+        // Закрываем все ненужные дескрипторы
+        for (int i = 3; i < sysconf(_SC_OPEN_MAX); i++) close(i);
         
         execvp(cmd->args[0], cmd->args);
         perror("execvp failed");
@@ -172,32 +170,32 @@ void execute_command(Command *cmd, int input_fd, int output_fd) {
     }
 }
 
-// Обработка конвейера команд
 void execute_pipeline(Command pipeline[], int cmd_count) {
     int fd[2];
     int input_fd = STDIN_FILENO;
     
     for (int i = 0; i < cmd_count; i++) {
         if (i < cmd_count - 1) {
-            pipe(fd);
+            if (pipe(fd) == -1) {
+                perror("pipe failed");
+                return;
+            }
         }
         
         execute_command(&pipeline[i], input_fd, 
                        (i == cmd_count - 1) ? STDOUT_FILENO : fd[1]);
         
-        if (input_fd != STDIN_FILENO) {
-            close(input_fd);
-        }
-        
+        if (input_fd != STDIN_FILENO) close(input_fd);
         if (i < cmd_count - 1) {
             close(fd[1]);
             input_fd = fd[0];
         }
     }
     
-    // Ожидание завершения всех процессов в конвейере
+    // Ожидание завершения
     if (!pipeline[cmd_count-1].background) {
-        while (wait(NULL) > 0);
+        int status;
+        while (waitpid(-1, &status, 0) > 0);
         foreground_mode = 1;
     } else {
         foreground_mode = 0;
@@ -208,7 +206,6 @@ int main() {
     char line[MAX_CMD_LEN];
     Command pipeline[MAX_PIPES];
     
-    // Настройка сигналов
     struct sigaction sa = {.sa_handler = sigint_handler, .sa_flags = SA_RESTART};
     sigemptyset(&sa.sa_mask);
     sigaction(SIGINT, &sa, NULL);
@@ -219,19 +216,15 @@ int main() {
         
         if (!fgets(line, sizeof(line), stdin)) break;
         
-        // Удаление переноса строки и добавление в историю
         line[strcspn(line, "\n")] = '\0';
         add_to_history(line);
         
         int cmd_count = parse_pipeline(line, pipeline);
         if (cmd_count == 0) continue;
         
-        // Обработка встроенных команд
         if (strcmp(pipeline[0].args[0], "exit") == 0) break;
         
-        if (execute_builtin(&pipeline[0])) {
-            continue;
-        }
+        if (execute_builtin(&pipeline[0])) continue;
         
         execute_pipeline(pipeline, cmd_count);
     }

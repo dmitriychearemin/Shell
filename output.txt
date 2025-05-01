@@ -1,4 +1,2 @@
-main
-main.c
-main.dSYM
-output.txt
+"Hello"
+четверг,  1 мая 2025 г. 18:07:25 (MSK)
