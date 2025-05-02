@@ -40,6 +40,13 @@ void enableRawMode() {
     tcsetattr(STDIN_FILENO, TCSAFLUSH, &raw);
 }
 
+void sigchld_handler(int sig) {
+    int status;
+    pid_t pid;
+    while ((pid = waitpid(-1, &status, WNOHANG)) > 0) {
+    }
+}
+
 void add_to_history(const char *cmd) {
     if (cmd[0] == '\0') return;
     
@@ -372,7 +379,10 @@ void free_pipeline(Command pipeline[], int cmd_count) {
 void execute_pipeline(Command pipeline[], int cmd_count) {
     int fd[2];
     int input_fd = STDIN_FILENO;
-    
+    pid_t pids[MAX_PIPES];
+    int is_background = pipeline[cmd_count-1].background;
+
+    // Создаем пайпы и запускаем процессы
     for (int i = 0; i < cmd_count; i++) {
         if (i < cmd_count - 1) {
             if (pipe(fd) == -1) {
@@ -380,32 +390,62 @@ void execute_pipeline(Command pipeline[], int cmd_count) {
                 return;
             }
         }
-        
-        execute_command(&pipeline[i], input_fd, 
-                       (i == cmd_count - 1) ? STDOUT_FILENO : fd[1]);
-        
-        if (input_fd != STDIN_FILENO) close(input_fd);
-        if (i < cmd_count - 1) {
-            close(fd[1]);
-            input_fd = fd[0];
+
+        pid_t pid = fork();
+        if (pid == 0) { // Дочерний процесс
+            // Настройка перенаправления ввода/вывода
+            if (input_fd != STDIN_FILENO) {
+                dup2(input_fd, STDIN_FILENO);
+                close(input_fd);
+            }
+            if (i != cmd_count - 1) {
+                dup2(fd[1], STDOUT_FILENO);
+                close(fd[1]);
+            }
+            
+            // Закрываем ненужные дескрипторы
+            close(fd[0]);
+
+            // Запуск команды
+            execvp(pipeline[i].args[0], pipeline[i].args);
+            perror("execvp failed");
+            exit(EXIT_FAILURE);
+        }
+        else if (pid > 0) { // Родительский процесс
+            pids[i] = pid;
+            if (input_fd != STDIN_FILENO) close(input_fd);
+            if (i != cmd_count - 1) {
+                close(fd[1]);
+                input_fd = fd[0];
+            }
+        }
+        else {
+            perror("fork failed");
+            return;
         }
     }
-    
-    if (!pipeline[cmd_count-1].background) {
-        int status;
-        while (waitpid(-1, &status, 0) > 0);
-        foreground_mode = 1;
-    } else {
-        foreground_mode = 0;
+
+    // Обработка фонового режима
+    if (!is_background) {
+        // Ожидаем завершения всех процессов в пайплайне
+        for (int i = 0; i < cmd_count; i++) {
+            int status;
+            waitpid(pids[i], &status, 0);
+        }
+    }
+    else {
+        // Для фоновых процессов регистрируем завершение через SIGCHLD
+        signal(SIGCHLD, SIG_IGN);
+        printf("[%d]+\tDone\n", pids[cmd_count-1]);
     }
 }
 
 int main() {
     Command pipeline[MAX_PIPES];
     
-    struct sigaction sa = {.sa_handler = sigint_handler, .sa_flags = SA_RESTART};
-    sigemptyset(&sa.sa_mask);
-    sigaction(SIGINT, &sa, NULL);
+    struct sigaction sa_chld = {.sa_handler = sigchld_handler, .sa_flags = SA_RESTART | SA_NOCLDSTOP};
+    sigemptyset(&sa_chld.sa_mask);
+    sigaction(SIGCHLD, &sa_chld, NULL);
     
     while (1) {
         printf("myshell> ");
