@@ -243,28 +243,23 @@ int parse_pipeline(char *line, Command pipeline[]) {
             continue;
         }
 
-        // Command initialization
         pipeline[cmd_count].input_file = NULL;
         pipeline[cmd_count].output_file = NULL;
         pipeline[cmd_count].append = 0;
         pipeline[cmd_count].background = 0;
 
-        // Parse command arguments
         char *arg_saveptr = NULL;
         char *arg = strtok_r(token, " \t", &arg_saveptr);
         int i = 0;
 
         while (arg != NULL && i < MAX_ARGS - 1) {
-            // Handle redirection operators
             if (strcmp(arg, ">") == 0 || strcmp(arg, ">>") == 0) {
-                // Get filename
                 char *file = strtok_r(NULL, " \t", &arg_saveptr);
                 if (!file) break;
                 
-                // Handle quotes in filename
                 if (file[0] == '"') {
                     file = strtok_r(NULL, "\"", &arg_saveptr);
-                    strtok_r(NULL, " \t", &arg_saveptr); // Skip remaining
+                    strtok_r(NULL, " \t", &arg_saveptr); 
                 }
 
                 if (file) {
@@ -284,7 +279,6 @@ int parse_pipeline(char *line, Command pipeline[]) {
                 pipeline[cmd_count].background = 1;
             }
             else {
-                // Handle quoted arguments
                 if (arg[0] == '"') {
                     char *end_quote = strchr(arg + 1, '"');
                     if (end_quote) {
@@ -369,10 +363,10 @@ void execute_command(Command *cmd, int input_fd, int output_fd) {
 void free_pipeline(Command pipeline[], int cmd_count) {
     for (int i = 0; i < cmd_count; i++) {
         for (int j = 0; pipeline[i].args[j]; j++) {
-            free(pipeline[i].args[j]); // Освобождаем копии аргументов
+            free(pipeline[i].args[j]); // Освобождение копии аргументов
         }
         if (pipeline[i].input_file) {
-            free(pipeline[i].input_file); // Освобождаем только если выделено
+            free(pipeline[i].input_file); // Освобождение только если выделено
         }
         if (pipeline[i].output_file) {
             free(pipeline[i].output_file);
@@ -397,7 +391,7 @@ void execute_pipeline(Command pipeline[], int cmd_count) {
             // Дочерний процесс
             if (is_background) {
                 setpgid(0, 0); // Новая группа процессов
-                signal(SIGINT, SIG_IGN); // Игнорируем прерывания
+                signal(SIGINT, SIG_IGN); // Игнорирование прерывания
             }
 
             if (input_fd != STDIN_FILENO) dup2(input_fd, STDIN_FILENO);
@@ -431,11 +425,11 @@ void execute_pipeline(Command pipeline[], int cmd_count) {
         tcsetpgrp(STDIN_FILENO, getpid());
     }
     else {
-        // Background - выводим информацию сразу
+        // Background - вывод информации о процессе
         printf("[%d]\n", pids[0]);
     }
     
-    // Всегда сбрасываем буфер вывода
+    //  сбрасываем буфер вывода
     fflush(stdout);
 }
 
