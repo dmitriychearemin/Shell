@@ -19,20 +19,22 @@ typedef struct {
     char *args[MAX_ARGS];
     char *input_file;
     char *output_file;
-    int append;
-    int background;
+    int append;     // Флаг дописывания (>>)
+    int background; // Фоновая команда (&)
 } Command;
 
 volatile sig_atomic_t foreground_mode = 1;
 char *history[MAX_HISTORY];
 int history_count = 0;
 
-struct termios orig_termios;
+struct termios orig_termios;    // Ориг. настройки терминала
 
+//Восстанавливает исходные настройки терминала
 void disableRawMode() {
     tcsetattr(STDIN_FILENO, TCSAFLUSH, &orig_termios);
 }
 
+//Отключает канонический режим и эхо, чтобы обрабатывать клавиши сразу
 void enableRawMode() {
     tcgetattr(STDIN_FILENO, &orig_termios);
     struct termios raw = orig_termios;
@@ -40,6 +42,7 @@ void enableRawMode() {
     tcsetattr(STDIN_FILENO, TCSAFLUSH, &raw);
 }
 
+//Обрабатывает завершение дочерних процессов, выводя информацию об их завершении.
 void sigchld_handler(int sig) {
     int status;
     pid_t pid;
@@ -51,6 +54,7 @@ void sigchld_handler(int sig) {
     }
 }
 
+//Добавляет команду в историю, удаляя старые при превышении лимита.
 void add_to_history(const char *cmd) {
     if (cmd[0] == '\0') return;
     
@@ -66,6 +70,7 @@ void add_to_history(const char *cmd) {
     history_count++;
 }
 
+//Выводит последние MAX_HISTORY команд
 void show_history() {
     int start = history_count > MAX_HISTORY ? history_count - MAX_HISTORY : 0;
     for (int i = start; i < history_count; i++) {
@@ -99,6 +104,7 @@ int execute_builtin(Command *cmd) {
     return 0;
 }
 
+//Перехватывает Ctrl+C, выводит приглашение оболочки для foreground-процессов.
 void sigint_handler(int sig) {
     if (foreground_mode) {
         printf("\nmyshell> ");
@@ -106,6 +112,7 @@ void sigint_handler(int sig) {
     }
 }
 
+//Чтение ввода с поддержкой истории
 char *read_line() {
     enableRawMode();
     
@@ -224,6 +231,7 @@ char *read_line() {
     return strdup(line);
 }
 
+//Парсинг командной строки
 int parse_pipeline(char *line, Command pipeline[]) {
     int cmd_count = 0;
     char *saveptr = NULL;
@@ -301,6 +309,7 @@ int parse_pipeline(char *line, Command pipeline[]) {
     return cmd_count;
 }
 
+//Запускает одну команду в дочернем процессе, настраивает перенаправления
 void execute_command(Command *cmd, int input_fd, int output_fd) {
     
     for (int i = 0; cmd->args[i]; i++) {
@@ -360,6 +369,7 @@ void execute_command(Command *cmd, int input_fd, int output_fd) {
     }
 }
 
+//Освобождает память, выделенную для аргументов и файлов в структурах Command
 void free_pipeline(Command pipeline[], int cmd_count) {
     for (int i = 0; i < cmd_count; i++) {
         for (int j = 0; pipeline[i].args[j]; j++) {
@@ -374,6 +384,7 @@ void free_pipeline(Command pipeline[], int cmd_count) {
     }
 }
 
+//Создает конвейер процессов, связывая их через pipe
 void execute_pipeline(Command pipeline[], int cmd_count) {
     int fd[2];
     int input_fd = STDIN_FILENO;
