@@ -44,6 +44,10 @@ void sigchld_handler(int sig) {
     int status;
     pid_t pid;
     while ((pid = waitpid(-1, &status, WNOHANG)) > 0) {
+        if (WIFEXITED(status) || WIFSIGNALED(status)) {
+            printf("[%d]+\tDone\n", pid);
+            fflush(stdout);
+        }
     }
 }
 
@@ -382,42 +386,36 @@ void execute_pipeline(Command pipeline[], int cmd_count) {
     pid_t pids[MAX_PIPES];
     int is_background = pipeline[cmd_count-1].background;
 
-    // Создаем пайпы и запускаем процессы
     for (int i = 0; i < cmd_count; i++) {
-        if (i < cmd_count - 1) {
-            if (pipe(fd) == -1) {
-                perror("pipe failed");
-                return;
-            }
+        if (i < cmd_count - 1 && pipe(fd) == -1) {
+            perror("pipe failed");
+            return;
         }
 
         pid_t pid = fork();
-        if (pid == 0) { // Дочерний процесс
-            // Настройка перенаправления ввода/вывода
-            if (input_fd != STDIN_FILENO) {
-                dup2(input_fd, STDIN_FILENO);
-                close(input_fd);
+        if (pid == 0) {
+            // Дочерний процесс
+            if (is_background) {
+                setpgid(0, 0); // Новая группа процессов
+                signal(SIGINT, SIG_IGN); // Игнорируем прерывания
             }
-            if (i != cmd_count - 1) {
-                dup2(fd[1], STDOUT_FILENO);
-                close(fd[1]);
-            }
-            
-            // Закрываем ненужные дескрипторы
-            close(fd[0]);
 
-            // Запуск команды
+            if (input_fd != STDIN_FILENO) dup2(input_fd, STDIN_FILENO);
+            if (i != cmd_count-1) dup2(fd[1], STDOUT_FILENO);
+
+            close(fd[0]);
+            if (input_fd != STDIN_FILENO) close(input_fd);
+            if (i != cmd_count-1) close(fd[1]);
+
             execvp(pipeline[i].args[0], pipeline[i].args);
             perror("execvp failed");
             exit(EXIT_FAILURE);
         }
-        else if (pid > 0) { // Родительский процесс
+        else if (pid > 0) {
             pids[i] = pid;
             if (input_fd != STDIN_FILENO) close(input_fd);
-            if (i != cmd_count - 1) {
-                close(fd[1]);
-                input_fd = fd[0];
-            }
+            input_fd = fd[0];
+            if (i != cmd_count-1) close(fd[1]);
         }
         else {
             perror("fork failed");
@@ -425,19 +423,20 @@ void execute_pipeline(Command pipeline[], int cmd_count) {
         }
     }
 
-    // Обработка фонового режима
     if (!is_background) {
-        // Ожидаем завершения всех процессов в пайплайне
-        for (int i = 0; i < cmd_count; i++) {
-            int status;
-            waitpid(pids[i], &status, 0);
-        }
+        // Foreground - ждем завершения всей группы
+        tcsetpgrp(STDIN_FILENO, getpgid(pids[0]));
+        int status;
+        waitpid(pids[cmd_count-1], &status, WUNTRACED);
+        tcsetpgrp(STDIN_FILENO, getpid());
     }
     else {
-        // Для фоновых процессов регистрируем завершение через SIGCHLD
-        signal(SIGCHLD, SIG_IGN);
-        printf("[%d]+\tDone\n", pids[cmd_count-1]);
+        // Background - выводим информацию сразу
+        printf("[%d]\n", pids[0]);
     }
+    
+    // Всегда сбрасываем буфер вывода
+    fflush(stdout);
 }
 
 int main() {
